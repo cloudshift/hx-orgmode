@@ -1,0 +1,8 @@
+
+#-debug
+-cp ../../core
+-cp ../
+-js orgtohtml.js
+-lib nodejs
+-main OrgToHtml
+-cmd cp orgtohtml.js /home/blackdog/Usr/bin/

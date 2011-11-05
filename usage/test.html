@@ -1,0 +1,120 @@
+<h1>Overview</h1>
+<p>Cloudshift provides a web development framework for Node.js and the haXe programming language. The aim is to provide useful tools for web development within a consistent model on both client and server that assists modularity and clarity of code.</p>
+<p>There are currently 6 modules</p>
+<pre>----------+-------------------------------------------------------------------------|
+ Core     | Core enums, classes and interfaces used in all other modules.           |
+ Http     | A simple http server.                                                   |
+ Session  | A session manager.                                                      |
+ Worker   | Worker processes for heavy lifting outwith the main Node.js event loop. |
+ Plumbing | A pub/sub server implementing push and websockets.                      |</pre>
+<p>All cloudshift modules are located on [https://github.com/cloudshift][haha]] and follow a consistent source layout and code convention.</p>
+<h1>Source Layout</h1>
+<h2>Interfaces not Implementations</h2>
+<p>In each module you find a top level .hx file of the same name as the module, e.g.</p>
+<ul>
+<li> Core.hx</li>
+<li> Http.hx</li>
+</ul>
+<ol>
+<li> ordered 1</li>
+<li> ordered 2</li>
+</ol>
+<p>etc.</p>
+<p>Top level .hx are in the package cloudshift.</p>
+<p>This top level module file provides interfaces and factory functions to provide default implementations for the given interfaces. Thus Core.hx defines an observable interface thus</p>
+<pre><code>
+   interface Observable<T> {
+   var  preNotify:T->Option<Dynamic>->T;
+   function notify(o:T):Void;
+   function observe(cb:T->Void,?info:Dynamic):Void->Void;
+   function peers():Array<Dynamic>;
+   function removePeers():Void;
+   function peek(cb:ObserverEvent->Void):Void;
+   }</code></pre>
+<p>and provides a factory function to produce an object of this signature</p>
+<pre><code>
+   var o:Observable = Core.event();
+
+   or the Http module defines the HttpServer interface
+
+   interface HttpServer implements Component<HttpEvents> {
+   function setPostHandler(path:String,cb:TPostHandler):Void;
+   function fields(req:js.Node.NodeHttpServerReq,cb:Hash<String>->Void):Void;
+   }</code></pre>
+<p>and then provides a factory function producing an object of this signature</p>
+<p>var http:Http = Http.server("localhost",8082,{server:"MyServ1.1.","www"});</p>
+<p>Thus with Cloudshift you program to interfaces not implementations. </p>
+<h2>Module Implementations</h2>
+<p>Each module provides a package for it's implementations, e.g.</p>
+<p>cloudshift.http cloudshift.core</p>
+<p>All cloudshift default implementations are suffixed with Impl, e.g.</p>
+<p>cloudshift.http.HttpServerImpl.hx</p>
+<p>Non Impl names are reserved for interfaces.</p>
+<h1>Core</h1>
+<p>Core provides Observable and Promise implementations, and a Component model built on top of these.</p>
+<ul>
+<li> Observable Documentation</li>
+<li> Promise Documentation</li>
+</ul>
+<h2>Parts and Assemblies</h2>
+<p>A Cloudshift Part is the base unit in a Cloudshift system. It is a means to start/stop an object and query it's state.</p>
+<p>A part may be aggregated into an Assembly. An Assembly is also a Part.</p>
+<p>An Assembly watches the state of it's component parts and manages the state changes between them. For example, you may have a View assembly that manages the logic of changing between ui pages.</p>
+<p>One may request the state of the part, given by T in Part<T> or request an Observable to state changes.</p>
+<p>To create a Part one implements the Part interface defined in Core.hx.</p>
+<pre><code>
+   interface Part<T> {
+       var part_:Part_;
+   }</code></pre>
+<p>Although the use of enums provides typing it's tedious for the user, so a series of Part mixins are available </p>
+<p>All main objects provided by Cloudshift are components, e.g.</p>
+<p>var http:Http = Http.server("localhost",8082,{server:"MyServ1.1.","www"});    http.start();</p>
+<p>The http server knows how to start itself, similary, it can stop itself</p>
+<p>http.stop();</p>
+<p>If a component needs to start itself but requires to inform you when it's ready then the start() function returns a Promise() for this purpose</p>
+<pre><code>
+
+   var p = http.start();
+   p.deliverTo(function(s) {
+      switch(s) {
+      case Ok:
+      case Err(msg):
+      }
+      });
+</code></pre>
+<p>A component implements Observable so it may notify observers of other events.</p>
+<pre><code>
+
+   http.observe(function(s) {
+   
+   });
+</code></pre>
+<h2>Component Registry</h2>
+<p>If you add a component to the registry then you can receive start/stop events and error/exception events.</p>
+<pre><code>
+
+   Registry.put("http",http);
+
+   Registry.observe(function(cl:EComponentLife) {
+       switch(cl) {
+        case Start(component):
+          switch(component.id()) {
+           case "http":
+
+          }
+        case Stop(component):
+        case Error(component,string):
+        case Except(component,dynamic):
+       }
+   });
+</code></pre>
+<p>To remove the need to reference external static references you may use</p>
+<p>Registry.get(componentID) to get a reference to an already registered component. You know you need an object but you don't want to have to specify exactly where it comes from.</p>
+<p>You may also iterate over all the registered components</p>
+<pre><code>
+
+   Registry.forEach(function(component) {
+       
+   });
+</code></pre>
+<p>You may also get(id) and del(id) components from the registry.</p>
