@@ -14,11 +14,13 @@ typedef Token<T> = {
 private typedef IToken<T> = {> Token<T> ,
   var pushback:Int;
   var discard:Bool;
+  var modeOnly:Bool;
 }
 
 enum SynOptions {
   Push(i:Int);
   Discard;
+  ModeChange;
 }
 
 enum SynStyle {
@@ -55,6 +57,7 @@ class Lexer<T> {
   var tokenGroups:Hash<{matchers:Array<IToken<T>>,finaliser:String->T}>;
   var markBuffer:Array<String>;
   var grpStack:Array<String>;
+  var matchedRE:EReg;
   
   public function new(rd:Reader,?s:SynStyle) {
     tokenGroups = new Hash();
@@ -83,13 +86,18 @@ class Lexer<T> {
 
   public function
   match(re:EReg,conv:Converter<T>,?options:Dynamic) {
-    var matcher = {recogniser:re,converter:conv,pushback:0,discard:false};
+    var matcher = {recogniser:re,converter:
+                   conv,pushback:0,
+                   discard:false,
+                   modeOnly:false};
+
     if (options != null) {
       var opts:Array<SynOptions> = (!Std.is(options,Array)) ? [options] : options;
       for (o in opts) {
         switch(o) {
         case Push(pb): matcher.pushback = pb;
         case Discard: matcher.discard = true;
+        case ModeChange:matcher.modeOnly = true;
         }
       }
     
@@ -97,6 +105,10 @@ class Lexer<T> {
 
     grp().matchers.push(matcher);
     return this;
+  }
+
+  public function matchedEReg():EReg {
+    return matchedRE;
   }
 
   inline function grp() {
@@ -124,6 +136,10 @@ class Lexer<T> {
     return this;
   }
 
+  public function getGroup() {
+    return curGroup;
+  }
+  
   public function
   use(?name:String) {
     if (name != null) {
@@ -131,6 +147,8 @@ class Lexer<T> {
       if (rt == null)
         throw "Token group :"+name+" does not exist";
 
+      //      trace("----------------------");
+      //trace("||| group = "+curGroup);
       grpStack.push(curGroup);
       curGroup = name;
       
@@ -146,7 +164,7 @@ class Lexer<T> {
       
     return this;
   }
-  
+
   public function
   removeGroup(name:String) {
     //tokenGroups.matchers.remove(name);
@@ -159,13 +177,13 @@ class Lexer<T> {
   }
 
   public function
-  yank():Array<String> {
+  yank():String {
     if (markBuffer != null) {
       var y = markBuffer;
       markBuffer = null;
-      return y;
+      return y.join("");
     }
-    return ["!yank buffer empty"];
+    return "!yank buffer empty";
   }
   
   public inline function
@@ -173,11 +191,6 @@ class Lexer<T> {
     return c == 10;
   }
 
-  public function
-  peek() {
-    return reader.charCodeAt(curChar);
-  }
-  
   public inline function
   column() {
     return fromBOL()+inChunk;
@@ -289,22 +302,27 @@ class Lexer<T> {
     leftOver = withChunks(leftOver,function(chunk) {
           for (rt in grp().matchers) {
               if (rt.recogniser.match(chunk)) {
+                  matchedRE = rt.recogniser;
                   var p = rt.recogniser.matchedPos();
                   tok = rt.converter(rt.recogniser);
                   if (tok != null) {
+                    if (rt.modeOnly) {
+                      return SameChunk;
+                    }
                     inChunk = p.pos;
                     var np = (rt.discard) ? -p.pos : p.pos + p.len + rt.pushback;
                     return ModChunk(np);
                   }
               }
           }
-          if (tok == null && grp().finaliser != null) {
+          if (tok == null && grp().finaliser != null) {              
               tok = grp().finaliser(chunk);
+              return SameChunk;
               if (tok == null) {
                 //still not recognised
               }
-          }
-          return NextChunk;
+          } else
+            return NextChunk;
       });
     
     return tok;
@@ -325,7 +343,7 @@ class Lexer<T> {
       }
     }
   }
-
+  
   public inline function
   prevChar() {
     return reader.charCodeAt(curChar-1);

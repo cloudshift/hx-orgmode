@@ -1,8 +1,11 @@
 
+
 #-debug
 -cp ../../core
 -cp ../
 -js orgtohtml.js
 -lib nodejs
+-D nodejsfut
 -main OrgToHtml
 -cmd cp orgtohtml.js /home/blackdog/Usr/bin/
+

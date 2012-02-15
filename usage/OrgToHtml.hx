@@ -10,16 +10,31 @@ class OrgToHtml {
   main() {
     //Org.next(html);
     var contents = new String(js.Node.fs.readFileSync(js.Node.process.argv[2]));
-    Org.parse(contents,html);
+
+    var metaFile = null;
+    if (js.Node.process.argv.length == 4) {
+      metaFile = js.Node.process.argv[3];
+    }
+    
+    #if !debug
+    Org.parse(contents,html,metaFile);
+    #else
+    Org.parse(contents,function(p){},metaFile);
+    #end
   }
 
   
   public static function
   html(cons) {
-    var print = js.Node.process.stdout.write;
+    var print = function(s) {
+        js.Node.process.stdout.write(s) ;
+    }
+        
     switch(cons) {
     case PARA:
-      print("<p></p>");
+      print("<p>");
+    case PARACLOSE:
+      print("</p>");
     case H1(s):
       print("<h1>"+s+"</h1>");
     case H2(s):
@@ -27,37 +42,56 @@ class OrgToHtml {
     case H3(s):
       print("<h3>"+s+"</h3>");
     case TEXTSTART(s):
-      print("<p>"+s);
-    case TEXT(s):
       print(s);
+    case TEXT(s):
+      print(" "+s+" ");
     case TEXTEND(s):
       print(s+"</p>");
     case SRC(s):
-      print("<pre>"+s.join("\n")+"</pre>");
+      print("<pre>"+s.htmlEscape()+"</pre>");
+    case TABLESTART(s):
+      print("<table>");
+      tableRows(print,[s],true);
     case TABLE(s):
-      print("<pre>"+s.join("\n")+"</pre>");
+      tableRows(print,s.slice(1));
+      print("</table>");
     case UNDERLINE(s):
       print('<span style="text-decoration:underline">'+s+'</span>');
     case BOLD(s):
       print('<strong>'+s+'</strong>');
-   case UNORD(s):
+   case UNORDSTART:
       print("<ul>");
-      s.foreach(function(el) {
-          print("<li>"+el+"</li>");
-        });
+    case UNORDEND:
       print("</ul>");
-     
-    case ORD(s):
+   case ORDSTART:
       print("<ol>");
-      s.foreach(function(el) {
-          print("<li>"+el+"</li>");
-        });
+    case ORDEND:
       print("</ol>");
-    case URL(u,d):
+    case LISTITEMSTART:
+      print("<li>");
+    case LISTITEMEND:
+      print("</li>");
+     case URL(u,d):
       print('<a href="'+u+'">'+d+'</a>');
     }
   }
  
-
+  static function tableRows(print,a:Array<String>,header=false) {
+    var td = "td";
+    if (header) {
+      td = "th";
+      print("<thead>") ;
+    }
+    else print("<tbody>");
+    
+    a.foreach(function(row) {
+        print("<tr>");
+        row.split("|").slice(0,-1).foreach(function(el) {
+            print("<"+td+">"+el.htmlEscape()+"</"+td+">");
+          });
+        print("</tr>");
+      });
+    if (header) print("</thead>") else print("</tbody>");
+  }
 
 }
