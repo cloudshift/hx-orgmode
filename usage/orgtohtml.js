@@ -500,6 +500,14 @@ Reflect.field = function(o,field) {
 Reflect.setField = function(o,field,value) {
 	o[field] = value;
 }
+Reflect.getProperty = function(o,field) {
+	var tmp;
+	return o == null?null:o.__properties__ && (tmp = o.__properties__["get_" + field])?o[tmp]():o[field];
+}
+Reflect.setProperty = function(o,field,value) {
+	var tmp;
+	if(o.__properties__ && (tmp = o.__properties__["set_" + field])) o[tmp](value); else o[field] = value;
+}
 Reflect.callMethod = function(o,func,args) {
 	return func.apply(o,args);
 }
@@ -606,15 +614,15 @@ cloudshift.Part_.prototype = {
 	,stop: null
 	,observe: null
 	,notify: null
-	,peer: null
 	,observeState: null
-	,onStart: null
-	,onStop: null
+	,notifyState: null
+	,peer: null
 	,__class__: cloudshift.Part_
 }
 if(!cloudshift.core) cloudshift.core = {}
 cloudshift.core.PartBaseImpl = $hxClasses["cloudshift.core.PartBaseImpl"] = function(parent) {
 	this.parent = parent;
+	this.partID = Type.getClassName(Type.getClass(parent));
 	this._events = cloudshift.Core.event();
 }
 cloudshift.core.PartBaseImpl.__name__ = ["cloudshift","core","PartBaseImpl"];
@@ -623,13 +631,14 @@ cloudshift.core.PartBaseImpl.prototype = {
 	partID: null
 	,_events: null
 	,parent: null
-	,startFunc: null
-	,stopFunc: null
 	,peer: function() {
 		return this.parent;
 	}
 	,notify: function(e) {
 		this._events.notify(cloudshift.EPartState.Event(e));
+	}
+	,notifyState: function(s) {
+		this._events.notify(s);
 	}
 	,observe: function(cb,info) {
 		return this._events.observe(function(s) {
@@ -649,54 +658,32 @@ cloudshift.core.PartBaseImpl.prototype = {
 	,start: function(d) {
 		var me = this;
 		var p = null;
-		if(this.startFunc != null) {
-			p = this.startFunc(d);
-			this.checkErr("start",p);
-			p.deliver(function(outcome) {
-				var $e = (outcome);
-				switch( $e[1] ) {
-				case 1:
-					me._events.notify(cloudshift.EPartState.Started);
-					break;
-				case 0:
-					var e = $e[2];
-					me._events.notify(cloudshift.EPartState.Error(e));
-					break;
-				}
-			});
-		} else throw "start request for " + Type.getClassName(Type.getClass(this.parent)) + " but no start function provided";
+		p = this.parent.start_(d);
+		this.checkErr("start",p);
+		p.onError(function(msg) {
+			me._events.notify(cloudshift.EPartState.Error(msg));
+		});
+		p.deliver(function(outcome) {
+			me._events.notify(cloudshift.EPartState.Started);
+		});
 		return p;
 	}
 	,stop: function(d) {
 		var me = this;
-		var p = cloudshift.Core.promise();
-		if(this.stopFunc != null) {
-			var p1 = this.stopFunc(d);
-			this.checkErr("stop",p1);
-			p1.deliver(function(outcome) {
-				var $e = (outcome);
-				switch( $e[1] ) {
-				case 1:
-					me._events.notify(cloudshift.EPartState.Stopped);
-					break;
-				case 0:
-					var e = $e[2];
-					me._events.notify(cloudshift.EPartState.Error(e));
-					break;
-				}
-			});
-		} else throw "stop request for " + Type.getClassName(Type.getClass(this.parent)) + " but no stop function provided";
+		var p = null;
+		p = this.parent.stop_(d);
+		this.checkErr("stop",p);
+		p.onError(function(msg) {
+			me._events.notify(cloudshift.EPartState.Error(msg));
+		});
+		p.deliver(function(outcome) {
+			me._events.notify(cloudshift.EPartState.Stopped);
+		});
 		return p;
 	}
 	,checkErr: function(type,outcome) {
 		if(outcome == null) throw Type.getClassName(Type.getClass(this.parent)) + " should not return null for " + type + " function";
 		return outcome;
-	}
-	,onStart: function(cb) {
-		this.startFunc = cb;
-	}
-	,onStop: function(cb) {
-		this.stopFunc = cb;
 	}
 	,__class__: cloudshift.core.PartBaseImpl
 }
@@ -735,13 +722,13 @@ cloudshift.orgmode.StringReader.prototype = {
 	}
 	,__class__: cloudshift.orgmode.StringReader
 }
-cloudshift.Promise = $hxClasses["cloudshift.Promise"] = function() { }
-cloudshift.Promise.__name__ = ["cloudshift","Promise"];
-cloudshift.Promise.prototype = {
+cloudshift.Future = $hxClasses["cloudshift.Future"] = function() { }
+cloudshift.Future.__name__ = ["cloudshift","Future"];
+cloudshift.Future.prototype = {
 	sequence: null
 	,resolve: null
 	,deliver: null
-	,thenMe: null
+	,deliverMe: null
 	,isCanceled: null
 	,ifCanceled: null
 	,allowCancelOnlyIf: null
@@ -749,14 +736,14 @@ cloudshift.Promise.prototype = {
 	,isDone: null
 	,isDelivered: null
 	,map: null
-	,forward: null
+	,flatMap: null
 	,filter: null
 	,value: null
 	,toOption: null
 	,toArray: null
-	,__class__: cloudshift.Promise
+	,__class__: cloudshift.Future
 }
-cloudshift.core.PromiseImpl = $hxClasses["cloudshift.core.PromiseImpl"] = function() {
+cloudshift.core.FutureImpl = $hxClasses["cloudshift.core.FutureImpl"] = function() {
 	this._listeners = [];
 	this._result = null;
 	this._isSet = false;
@@ -765,22 +752,22 @@ cloudshift.core.PromiseImpl = $hxClasses["cloudshift.core.PromiseImpl"] = functi
 	this._canceled = [];
 	this._combined = 0;
 }
-cloudshift.core.PromiseImpl.__name__ = ["cloudshift","core","PromiseImpl"];
-cloudshift.core.PromiseImpl.__interfaces__ = [cloudshift.Promise];
-cloudshift.core.PromiseImpl.dead = function() {
-	var prm = new cloudshift.core.PromiseImpl();
+cloudshift.core.FutureImpl.__name__ = ["cloudshift","core","FutureImpl"];
+cloudshift.core.FutureImpl.__interfaces__ = [cloudshift.Future];
+cloudshift.core.FutureImpl.dead = function() {
+	var prm = new cloudshift.core.FutureImpl();
 	prm.cancel();
 	return prm;
 }
-cloudshift.core.PromiseImpl.create = function() {
-	return new cloudshift.core.PromiseImpl();
+cloudshift.core.FutureImpl.create = function() {
+	return new cloudshift.core.FutureImpl();
 }
-cloudshift.core.PromiseImpl.waitFor = function(toJoin) {
-	var joinLen = toJoin.length, myprm = cloudshift.core.PromiseImpl.create(), combined = [], sequence = 0;
+cloudshift.core.FutureImpl.waitFor = function(toJoin) {
+	var joinLen = toJoin.length, myprm = cloudshift.core.FutureImpl.create(), combined = [], sequence = 0;
 	cloudshift.ArrayX.foreach(toJoin,function(xprm) {
-		if(!Std["is"](xprm,cloudshift.Promise)) throw "not a promise:" + xprm;
+		if(!Std["is"](xprm,cloudshift.Future)) throw "not a promise:" + xprm;
 		xprm.sequence = sequence++;
-		xprm.thenMe(function(r) {
+		xprm.deliverMe(function(r) {
 			combined.push({ seq : r.sequence, val : r._result});
 			if(combined.length == joinLen) {
 				combined.sort(function(x,y) {
@@ -794,7 +781,7 @@ cloudshift.core.PromiseImpl.waitFor = function(toJoin) {
 	});
 	return myprm;
 }
-cloudshift.core.PromiseImpl.prototype = {
+cloudshift.core.FutureImpl.prototype = {
 	sequence: null
 	,_listeners: null
 	,_result: null
@@ -804,7 +791,7 @@ cloudshift.core.PromiseImpl.prototype = {
 	,_canceled: null
 	,_combined: null
 	,resolve: function(t) {
-		return this._isCanceled?this:this._isSet?cloudshift.Mixin.error("Promise already delivered"):(function($this) {
+		return this._isCanceled?this:this._isSet?cloudshift.Mixin.error("Future already delivered"):(function($this) {
 			var $r;
 			$this._result = t;
 			$this._isSet = true;
@@ -859,7 +846,7 @@ cloudshift.core.PromiseImpl.prototype = {
 		if(this.isCanceled()) return this; else if(this.isDelivered()) f(this._result); else this._listeners.push(f);
 		return this;
 	}
-	,thenMe: function(f) {
+	,deliverMe: function(f) {
 		var me = this;
 		if(this.isCanceled()) return this; else if(this.isDelivered()) f(this); else this._listeners.push(function(g) {
 			f(me);
@@ -867,7 +854,7 @@ cloudshift.core.PromiseImpl.prototype = {
 		return this;
 	}
 	,map: function(f) {
-		var fut = new cloudshift.core.PromiseImpl();
+		var fut = new cloudshift.core.FutureImpl();
 		this.deliver(function(t) {
 			fut.resolve(f(t));
 		});
@@ -876,11 +863,11 @@ cloudshift.core.PromiseImpl.prototype = {
 		});
 		return fut;
 	}
-	,after: function(f) {
+	,then: function(f) {
 		return f;
 	}
-	,forward: function(f) {
-		var fut = new cloudshift.core.PromiseImpl();
+	,flatMap: function(f) {
+		var fut = new cloudshift.core.FutureImpl();
 		this.deliver(function(t) {
 			f(t).deliver(function(s) {
 				fut.resolve(s);
@@ -894,7 +881,7 @@ cloudshift.core.PromiseImpl.prototype = {
 		return fut;
 	}
 	,filter: function(f) {
-		var fut = new cloudshift.core.PromiseImpl();
+		var fut = new cloudshift.core.FutureImpl();
 		this.deliver(function(t) {
 			if(f(t)) fut.resolve(t); else fut.forceCancel();
 		});
@@ -924,7 +911,7 @@ cloudshift.core.PromiseImpl.prototype = {
 		}
 		return this;
 	}
-	,__class__: cloudshift.core.PromiseImpl
+	,__class__: cloudshift.core.FutureImpl
 }
 if(!haxe.io) haxe.io = {}
 haxe.io.Bytes = $hxClasses["haxe.io.Bytes"] = function(length,b) {
@@ -933,35 +920,12 @@ haxe.io.Bytes = $hxClasses["haxe.io.Bytes"] = function(length,b) {
 }
 haxe.io.Bytes.__name__ = ["haxe","io","Bytes"];
 haxe.io.Bytes.alloc = function(length) {
-	var a = new Array();
-	var _g = 0;
-	while(_g < length) {
-		var i = _g++;
-		a.push(0);
-	}
-	return new haxe.io.Bytes(length,a);
+	var newB = new Buffer(length);
+	newB.fill(0,0);
+	return new haxe.io.Bytes(length,newB);
 }
 haxe.io.Bytes.ofString = function(s) {
-	var a = new Array();
-	var _g1 = 0, _g = s.length;
-	while(_g1 < _g) {
-		var i = _g1++;
-		var c = s.cca(i);
-		if(c <= 127) a.push(c); else if(c <= 2047) {
-			a.push(192 | c >> 6);
-			a.push(128 | c & 63);
-		} else if(c <= 65535) {
-			a.push(224 | c >> 12);
-			a.push(128 | c >> 6 & 63);
-			a.push(128 | c & 63);
-		} else {
-			a.push(240 | c >> 18);
-			a.push(128 | c >> 12 & 63);
-			a.push(128 | c >> 6 & 63);
-			a.push(128 | c & 63);
-		}
-	}
-	return new haxe.io.Bytes(a.length,a);
+	return new haxe.io.Bytes(s.length,new Buffer(s,"utf8"));
 }
 haxe.io.Bytes.ofData = function(b) {
 	return new haxe.io.Bytes(b.length,b);
@@ -977,21 +941,7 @@ haxe.io.Bytes.prototype = {
 	}
 	,blit: function(pos,src,srcpos,len) {
 		if(pos < 0 || srcpos < 0 || len < 0 || pos + len > this.length || srcpos + len > src.length) throw haxe.io.Error.OutsideBounds;
-		var b1 = this.b;
-		var b2 = src.b;
-		if(b1 == b2 && pos > srcpos) {
-			var i = len;
-			while(i > 0) {
-				i--;
-				b1[i + pos] = b2[i + srcpos];
-			}
-			return;
-		}
-		var _g = 0;
-		while(_g < len) {
-			var i = _g++;
-			b1[i + pos] = b2[i + srcpos];
-		}
+		src.b.copy(this.b,pos,srcpos,srcpos + len);
 	}
 	,sub: function(pos,len) {
 		if(pos < 0 || len < 0 || pos + len > this.length) throw haxe.io.Error.OutsideBounds;
@@ -1081,17 +1031,25 @@ cloudshift.Option.Some = function(v) { var $x = ["Some",1,v]; $x.__enum__ = clou
 cloudshift.Either = $hxClasses["cloudshift.Either"] = { __ename__ : ["cloudshift","Either"], __constructs__ : ["Left","Right"] }
 cloudshift.Either.Left = function(v) { var $x = ["Left",0,v]; $x.__enum__ = cloudshift.Either; $x.toString = $estr; return $x; }
 cloudshift.Either.Right = function(v) { var $x = ["Right",1,v]; $x.__enum__ = cloudshift.Either; $x.toString = $estr; return $x; }
-cloudshift.EOkVal = $hxClasses["cloudshift.EOkVal"] = { __ename__ : ["cloudshift","EOkVal"], __constructs__ : ["Ok"] }
-cloudshift.EOkVal.Ok = ["Ok",0];
-cloudshift.EOkVal.Ok.toString = $estr;
-cloudshift.EOkVal.Ok.__enum__ = cloudshift.EOkVal;
+cloudshift.Outcome = $hxClasses["cloudshift.Outcome"] = function() { }
+cloudshift.Outcome.__name__ = ["cloudshift","Outcome"];
+cloudshift.Outcome.prototype = {
+	onError: null
+	,resolve: null
+	,flatMap: null
+	,map: null
+	,deliver: null
+	,future: null
+	,cancel: null
+	,__class__: cloudshift.Outcome
+}
 cloudshift.EOperation = $hxClasses["cloudshift.EOperation"] = { __ename__ : ["cloudshift","EOperation"], __constructs__ : ["Add","Del"] }
 cloudshift.EOperation.Add = function(info) { var $x = ["Add",0,info]; $x.__enum__ = cloudshift.EOperation; $x.toString = $estr; return $x; }
 cloudshift.EOperation.Del = function(info) { var $x = ["Del",1,info]; $x.__enum__ = cloudshift.EOperation; $x.toString = $estr; return $x; }
-cloudshift.ELogLevel = $hxClasses["cloudshift.ELogLevel"] = { __ename__ : ["cloudshift","ELogLevel"], __constructs__ : ["LInf","LWarn","LErr"] }
-cloudshift.ELogLevel.LInf = function(s) { var $x = ["LInf",0,s]; $x.__enum__ = cloudshift.ELogLevel; $x.toString = $estr; return $x; }
-cloudshift.ELogLevel.LWarn = function(s) { var $x = ["LWarn",1,s]; $x.__enum__ = cloudshift.ELogLevel; $x.toString = $estr; return $x; }
-cloudshift.ELogLevel.LErr = function(s) { var $x = ["LErr",2,s]; $x.__enum__ = cloudshift.ELogLevel; $x.toString = $estr; return $x; }
+cloudshift.ELogLevel = $hxClasses["cloudshift.ELogLevel"] = { __ename__ : ["cloudshift","ELogLevel"], __constructs__ : ["I","W","E"] }
+cloudshift.ELogLevel.I = function(s) { var $x = ["I",0,s]; $x.__enum__ = cloudshift.ELogLevel; $x.toString = $estr; return $x; }
+cloudshift.ELogLevel.W = function(s) { var $x = ["W",1,s]; $x.__enum__ = cloudshift.ELogLevel; $x.toString = $estr; return $x; }
+cloudshift.ELogLevel.E = function(s) { var $x = ["E",2,s]; $x.__enum__ = cloudshift.ELogLevel; $x.toString = $estr; return $x; }
 cloudshift.Observable = $hxClasses["cloudshift.Observable"] = function() { }
 cloudshift.Observable.__name__ = ["cloudshift","Observable"];
 cloudshift.Observable.prototype = {
@@ -1117,29 +1075,26 @@ cloudshift.Part = $hxClasses["cloudshift.Part"] = function() { }
 cloudshift.Part.__name__ = ["cloudshift","Part"];
 cloudshift.Part.prototype = {
 	part_: null
+	,start_: null
+	,stop_: null
 	,__class__: cloudshift.Part
-}
-cloudshift.Assembly = $hxClasses["cloudshift.Assembly"] = function() { }
-cloudshift.Assembly.__name__ = ["cloudshift","Assembly"];
-cloudshift.Assembly.prototype = {
-	add: null
-	,remove: null
-	,watch: null
-	,notify: null
-	,log: null
-	,iterator: null
-	,__class__: cloudshift.Assembly
 }
 cloudshift.Core = $hxClasses["cloudshift.Core"] = function() { }
 cloudshift.Core.__name__ = ["cloudshift","Core"];
-cloudshift.Core.promise = function() {
-	return new cloudshift.core.PromiseImpl();
+cloudshift.Core.future = function() {
+	return new cloudshift.core.FutureImpl();
+}
+cloudshift.Core.outcome = function(cancel) {
+	return new cloudshift.core.OutcomeImpl(cancel);
 }
 cloudshift.Core.waitFor = function(toJoin) {
-	return cloudshift.core.PromiseImpl.waitFor(toJoin);
+	return cloudshift.core.FutureImpl.waitFor(toJoin);
 }
-cloudshift.Core.cancelledPromise = function() {
-	return cloudshift.core.PromiseImpl.dead();
+cloudshift.Core.waitOutcomes = function(toJoin) {
+	return cloudshift.core.OutcomeImpl.waitFor(toJoin);
+}
+cloudshift.Core.cancelledFuture = function() {
+	return cloudshift.core.FutureImpl.dead();
 }
 cloudshift.Core.event = function() {
 	return new cloudshift.core.ObservableImpl();
@@ -1183,14 +1138,118 @@ cloudshift.Core.error = function(msg,category,inf) {
 	if(category == null) category = "";
 	cloudshift.core.LogImpl.error(msg,category,inf);
 }
-cloudshift.Core.file = function(f) {
-	return f;
-}
-cloudshift.Core.proc = function(f) {
-	return f;
+cloudshift.Core.debug = function(msg,category,inf) {
+	if(category == null) category = "";
+	cloudshift.core.LogImpl.debug(msg,category,inf);
 }
 cloudshift.Core.prototype = {
 	__class__: cloudshift.Core
+}
+cloudshift.core.OutcomeImpl = $hxClasses["cloudshift.core.OutcomeImpl"] = function(cancel) {
+	this.fut = cloudshift.Core.future();
+	this.err = null;
+	if(cancel != null) this.userCancel = cancel;
+}
+cloudshift.core.OutcomeImpl.__name__ = ["cloudshift","core","OutcomeImpl"];
+cloudshift.core.OutcomeImpl.__interfaces__ = [cloudshift.Outcome];
+cloudshift.core.OutcomeImpl.waitFor = function(toJoin) {
+	var oc = cloudshift.Core.outcome(), results = [];
+	cloudshift.Core.waitFor(cloudshift.ArrayX.map(toJoin,function(outcome) {
+		return outcome.future();
+	})).deliver(function(aoc) {
+		cloudshift.ArrayX.foreach(aoc,function(el) {
+			if(cloudshift.EitherX.isLeft(el)) {
+				oc.resolve(cloudshift.Either.Left(cloudshift.OptionX.get(cloudshift.EitherX.left(el))));
+				return;
+			}
+			results.push(cloudshift.OptionX.get(cloudshift.EitherX.right(el)));
+		});
+		oc.resolve(cloudshift.Either.Right(results));
+	});
+	return oc;
+}
+cloudshift.core.OutcomeImpl.prototype = {
+	fut: null
+	,userCancel: null
+	,err: null
+	,onCancel: function(e) {
+		this.err = e;
+		if(this.userCancel != null) this.userCancel(e); else cloudshift.core.LogImpl.error(Std.string(e),"",{ fileName : "OutcomeImpl.hx", lineNumber : 25, className : "cloudshift.core.OutcomeImpl", methodName : "onCancel"});
+	}
+	,future: function() {
+		return this.fut;
+	}
+	,onError: function(cb) {
+		this.userCancel = cb;
+		return this;
+	}
+	,error: function() {
+		return this.err;
+	}
+	,deliver: function(cb) {
+		var me = this;
+		this.fut.deliver(function(e) {
+			var $e = (e);
+			switch( $e[1] ) {
+			case 1:
+				var v = $e[2];
+				cb(v);
+				break;
+			case 0:
+				var msg = $e[2];
+				me.onCancel(msg);
+				break;
+			}
+		});
+		return this;
+	}
+	,resolve: function(e) {
+		this.fut.resolve(e);
+	}
+	,map: function(f) {
+		var me = this;
+		var nf = cloudshift.Core.outcome(this.userCancel);
+		this.fut.deliver(function(e) {
+			var $e = (e);
+			switch( $e[1] ) {
+			case 1:
+				var t = $e[2];
+				nf.resolve(cloudshift.Either.Right(f(t)));
+				break;
+			case 0:
+				var msg = $e[2];
+				me.onCancel(msg);
+				nf.cancel();
+				break;
+			}
+		});
+		return nf;
+	}
+	,flatMap: function(cb) {
+		var me = this;
+		var nf = cloudshift.Core.outcome(this.userCancel);
+		this.fut.deliver(function(either) {
+			var $e = (either);
+			switch( $e[1] ) {
+			case 1:
+				var result = $e[2];
+				cb(result).deliver(function(r) {
+					nf.resolve(cloudshift.Either.Right(r));
+				});
+				break;
+			case 0:
+				var msg = $e[2];
+				me.onCancel(msg);
+				nf.cancel();
+				break;
+			}
+		});
+		return nf;
+	}
+	,cancel: function() {
+		this.fut.cancel();
+	}
+	,__class__: cloudshift.core.OutcomeImpl
 }
 haxe.io.Error = $hxClasses["haxe.io.Error"] = { __ename__ : ["haxe","io","Error"], __constructs__ : ["Blocked","Overflow","OutsideBounds","Custom"] }
 haxe.io.Error.Blocked = ["Blocked",0];
@@ -1482,12 +1541,6 @@ cloudshift.StringX.equals = function(v1,v2) {
 cloudshift.StringX.toString = function(v) {
 	return v;
 }
-cloudshift.StringX.toFile = function(s) {
-	return s;
-}
-cloudshift.StringX.toProc = function(s) {
-	return s;
-}
 cloudshift.StringX.parse = function(str) {
 	return JSON.parse(str);
 }
@@ -1560,6 +1613,15 @@ cloudshift.ArrayX.map = function(a,f) {
 		var e = a[_g];
 		++_g;
 		n.push(f(e));
+	}
+	return n;
+}
+cloudshift.ArrayX.mapi = function(a,f) {
+	var n = [];
+	var _g1 = 0, _g = a.length;
+	while(_g1 < _g) {
+		var i = _g1++;
+		n.push(f(a[i],i));
 	}
 	return n;
 }
@@ -2127,12 +2189,6 @@ cloudshift.PartX.start = function(part,data) {
 cloudshift.PartX.stop = function(part,data) {
 	return part.part_.stop(data);
 }
-cloudshift.PartX.onStart = function(part,cb) {
-	part.part_.onStart(cb);
-}
-cloudshift.PartX.onStop = function(part,cb) {
-	part.part_.onStop(cb);
-}
 cloudshift.PartX.observe = function(part,cb) {
 	part.part_.observe(cb);
 }
@@ -2232,12 +2288,14 @@ Type.getInstanceFields = function(c) {
 	var a = [];
 	for(var i in c.prototype) a.push(i);
 	a.remove("__class__");
+	a.remove("__properties__");
 	return a;
 }
 Type.getClassFields = function(c) {
 	var a = Reflect.fields(c);
 	a.remove("__name__");
 	a.remove("__interfaces__");
+	a.remove("__properties__");
 	a.remove("__super__");
 	a.remove("prototype");
 	return a;
@@ -2905,15 +2963,15 @@ cloudshift.core.LogImpl.format = function(type,msg,cat,inf) {
 	return "[" + type + "|" + time + "|" + pos + category + "] " + Std.string(msg);
 }
 cloudshift.core.LogImpl.myTrace = function(v,inf) {
-	cloudshift.core.LogImpl.write(v);
+	cloudshift.core.LogImpl.debug(v,"",inf);
 }
 cloudshift.core.LogImpl.init = function(fileName) {
 	if(fileName != null) cloudshift.core.LogImpl.logFileFD = js.Node.fs.openSync(fileName,"a+",438); else cloudshift.core.LogImpl.logFileFD = -1;
 }
-cloudshift.core.LogImpl.write = function(msg) {
+cloudshift.core.LogImpl.write = function(msg,type) {
 	if(msg != null) {
 		if(cloudshift.core.LogImpl.logFileFD != -1) {
-			var b = new Buffer(msg + "\n");
+			var b = new Buffer(msg + "\n","utf8");
 			js.Node.fs.write(cloudshift.core.LogImpl.logFileFD,b,0,b.length,null);
 		} else {
 			console.log(msg);
@@ -2922,7 +2980,7 @@ cloudshift.core.LogImpl.write = function(msg) {
 }
 cloudshift.core.LogImpl.doTrace = function(type,category,msg,inf) {
 	if(type == "error") msg = msg + "\n" + haxe.Stack.toString(haxe.Stack.exceptionStack());
-	cloudshift.core.LogImpl.write(cloudshift.core.LogImpl.format(type,msg,category,inf));
+	cloudshift.core.LogImpl.write(cloudshift.core.LogImpl.format(type,msg,category,inf),type);
 }
 cloudshift.core.LogImpl.info = function(msg,category,inf) {
 	if(category == null) category = "";
@@ -2935,6 +2993,10 @@ cloudshift.core.LogImpl.warn = function(msg,category,inf) {
 cloudshift.core.LogImpl.error = function(msg,category,inf) {
 	if(category == null) category = "";
 	cloudshift.core.LogImpl.doTrace("error",category,msg,inf);
+}
+cloudshift.core.LogImpl.debug = function(msg,category,inf) {
+	if(category == null) category = "";
+	cloudshift.core.LogImpl.doTrace("debug",category,msg,inf);
 }
 cloudshift.core.LogImpl.prototype = {
 	__class__: cloudshift.core.LogImpl
@@ -3025,7 +3087,12 @@ OrgToHtml.html = function(cons) {
 		break;
 	case 19:
 		var d = $e[3], u = $e[2];
-		print("<a href=\"" + u + "\">" + d + "</a>");
+		var targetIndex = u.indexOf("#");
+		if(targetIndex == -1) print("<a href=\"" + u + "\">" + d + "</a>"); else {
+			var target = "target=\"" + u.substr(targetIndex + 1) + "\"";
+			var url = u.substr(0,targetIndex);
+			print("<a " + target + " href=\"" + url + "\">" + d + "</a>");
+		}
 		break;
 	}
 }
@@ -3141,8 +3208,6 @@ js.Boot.__init();
 	js.Node.dgram = js.Node.require("dgram");
 	js.Node.assert = js.Node.require("assert");
 	js.Node.repl = js.Node.require("repl");
-	var b = js.Node.require("buffer");
-	Buffer = b.Buffer;
 	js.Node.cluster = js.Node.require("cluster");
 }
 {
@@ -3220,6 +3285,7 @@ js.NodeC.UTF8 = "utf8";
 js.NodeC.ASCII = "ascii";
 js.NodeC.BINARY = "binary";
 js.NodeC.BASE64 = "base64";
+js.NodeC.HEX = "hex";
 js.NodeC.EVENT_EVENTEMITTER_NEWLISTENER = "newListener";
 js.NodeC.EVENT_EVENTEMITTER_ERROR = "error";
 js.NodeC.EVENT_STREAM_DATA = "data";
@@ -3230,6 +3296,7 @@ js.NodeC.EVENT_STREAM_DRAIN = "drain";
 js.NodeC.EVENT_STREAM_CONNECT = "connect";
 js.NodeC.EVENT_STREAM_SECURE = "secure";
 js.NodeC.EVENT_STREAM_TIMEOUT = "timeout";
+js.NodeC.EVENT_STREAM_PIPE = "pipe";
 js.NodeC.EVENT_PROCESS_EXIT = "exit";
 js.NodeC.EVENT_PROCESS_UNCAUGHTEXCEPTION = "uncaughtException";
 js.NodeC.EVENT_PROCESS_SIGINT = "SIGINT";

@@ -72,7 +72,14 @@ class OrgToHtml {
     case LISTITEMEND:
       print("</li>");
      case URL(u,d):
-      print('<a href="'+u+'">'+d+'</a>');
+       var targetIndex = u.indexOf("#");
+       if (targetIndex == -1)
+         print('<a href="'+u+'">'+d+'</a>');
+       else {
+         var target = 'target="'+ u.substr(targetIndex+1)+'"';
+         var url = u.substr(0,targetIndex);
+         print('<a '+target+' href="'+url+'">'+d+'</a>');
+       }
     }
   }
  

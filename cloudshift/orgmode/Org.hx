@@ -360,7 +360,7 @@ class Org {
         supplyNext(UNDERLINE(s));
       case TIGNORE:
       case TURL(u,d):
-         supplyNext(URL(u,d));
+        supplyNext(URL(u,d));
 
       case TMETA_TITLE(t):
         meta.title = t;      

@@ -1,7 +1,7 @@
 
 
 #-debug
--cp ../../core
+-cp ../../cloudshift
 -cp ../
 -js orgtohtml.js
 -lib nodejs
